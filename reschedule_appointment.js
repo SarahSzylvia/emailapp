@@ -1,161 +1,81 @@
 /**
  * Reschedule Appointment Widget for Zoho CRM
- * Handles appointment rescheduling functionality with popup modal
+ * Follows Zoho CRM widget structure pattern
  */
 
-class RescheduleAppointmentWidget {
-    constructor() {
-        this.currentAppointment = null;
-        this.modal = null;
-        this.form = null;
-        this.isLoading = false;
-        
-        // Initialize the widget
-        this.init();
+ZOHO.embeddedApp.on("PageLoad", function (data) {
+    // DOM elements
+    const rescheduleBtn = document.getElementById("rescheduleBtn");
+    const rescheduleModal = document.getElementById("rescheduleModal");
+    const closeModal = document.getElementById("closeModal");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const confirmBtn = document.getElementById("confirmReschedule");
+    const rescheduleForm = document.getElementById("rescheduleForm");
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    const messageContainer = document.getElementById("messageContainer");
+    
+    // Form fields
+    const rescheduleFromField = document.getElementById("rescheduleFrom");
+    const newAppointmentDateTime = document.getElementById("newAppointmentDateTime");
+    const rescheduleReason = document.getElementById("rescheduleReason");
+    const rescheduleNote = document.getElementById("rescheduleNote");
+
+    // State variables
+    let currentAppointmentData = null;
+    let currentRecordId = null;
+    let isLoading = false;
+
+    /**
+     * Initialize the widget with current record data
+     */
+    function initializeWidget() {
+        if (data.Entity === "Appointment_Bookings" && data.EntityId) {
+            currentRecordId = data.EntityId;
+            fetchCurrentAppointmentData();
+        } else {
+            showMessage("This widget should be used in Appointment_Bookings module", "error");
+        }
     }
 
     /**
-     * Initialize the widget
+     * Fetch current appointment data from Zoho CRM
      */
-    init() {
-        this.bindEvents();
-        this.loadCurrentAppointmentData();
-    }
-
-    /**
-     * Bind event listeners
-     */
-    bindEvents() {
-        const rescheduleBtn = document.getElementById('rescheduleBtn');
-        const closeModal = document.getElementById('closeModal');
-        const cancelBtn = document.getElementById('cancelBtn');
-        const confirmBtn = document.getElementById('confirmReschedule');
-        const modal = document.getElementById('rescheduleModal');
-
-        if (rescheduleBtn) {
-            rescheduleBtn.addEventListener('click', () => this.openModal());
-        }
-
-        if (closeModal) {
-            closeModal.addEventListener('click', () => this.closeModal());
-        }
-
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', () => this.closeModal());
-        }
-
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', (e) => this.handleReschedule(e));
-        }
-
-        // Close modal when clicking outside
-        if (modal) {
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    this.closeModal();
-                }
+    async function fetchCurrentAppointmentData() {
+        try {
+            const response = await ZOHO.CRM.API.getRecord({
+                Entity: "Appointment_Bookings",
+                RecordID: currentRecordId,
+                fields: [
+                    "Name", 
+                    "Appointment_Start_Date_Time", 
+                    "Appointment_End_Date_Time",
+                    "Appointment_For",
+                    "Doctor_Name",
+                    "Service_Name",
+                    "Duration",
+                    "Appointment_Mode"
+                ]
             });
-        }
 
-        // Handle ESC key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this.isModalOpen()) {
-                this.closeModal();
-            }
-        });
-
-        // Form validation
-        const form = document.getElementById('rescheduleForm');
-        if (form) {
-            form.addEventListener('input', () => this.validateForm());
-        }
-    }
-
-    /**
-     * Load current appointment data from Zoho CRM
-     */
-    async loadCurrentAppointmentData() {
-        try {
-            // Get current record ID from Zoho CRM context
-            const recordId = await this.getCurrentRecordId();
-            
-            if (!recordId) {
-                this.showMessage('Unable to get current record ID', 'error');
-                return;
-            }
-
-            // Fetch appointment data
-            const appointmentData = await this.fetchAppointmentData(recordId);
-            
-            if (appointmentData) {
-                this.currentAppointment = appointmentData;
-                this.populateCurrentAppointmentData();
+            if (response.data && response.data.length > 0) {
+                currentAppointmentData = response.data[0];
+                populateRescheduleFromField();
+                console.log("Current appointment data loaded:", currentAppointmentData);
+            } else {
+                showMessage("Unable to load appointment data", "error");
             }
         } catch (error) {
-            console.error('Error loading appointment data:', error);
-            this.showMessage('Error loading appointment data', 'error');
+            console.error("Error fetching appointment data:", error);
+            showMessage("Error loading appointment data", "error");
         }
     }
 
     /**
-     * Get current record ID from Zoho CRM
+     * Populate the "Reschedule From" field with current appointment date
      */
-    async getCurrentRecordId() {
-        try {
-            // For Zoho CRM widget context
-            if (typeof ZOHO !== 'undefined' && ZOHO.CRM) {
-                const entity = await ZOHO.CRM.UI.Record.get();
-                return entity.data[0].id;
-            }
-            
-            // Fallback: try to get from URL parameters
-            const urlParams = new URLSearchParams(window.location.search);
-            return urlParams.get('recordId') || urlParams.get('id');
-        } catch (error) {
-            console.error('Error getting record ID:', error);
-            return null;
-        }
-    }
-
-    /**
-     * Fetch appointment data from Zoho CRM
-     */
-    async fetchAppointmentData(recordId) {
-        try {
-            if (typeof ZOHO !== 'undefined' && ZOHO.CRM) {
-                const response = await ZOHO.CRM.API.getRecord({
-                    Entity: 'Appointment_Bookings',
-                    RecordID: recordId
-                });
-                
-                if (response.data && response.data.length > 0) {
-                    return response.data[0];
-                }
-            }
-            
-            // Mock data for testing purposes
-            return {
-                id: recordId,
-                Appointment_Start_Date_Time: '2025-09-08T14:00:00',
-                Name: 'BOOK-001',
-                Appointment_For: 'John Doe',
-                Doctor_Name: 'Dr. Smith'
-            };
-        } catch (error) {
-            console.error('Error fetching appointment data:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Populate current appointment data in the form
-     */
-    populateCurrentAppointmentData() {
-        if (!this.currentAppointment) return;
-
-        const rescheduleFromField = document.getElementById('rescheduleFrom');
-        if (rescheduleFromField && this.currentAppointment.Appointment_Start_Date_Time) {
-            const formattedDate = this.formatDateTimeForDisplay(this.currentAppointment.Appointment_Start_Date_Time);
+    function populateRescheduleFromField() {
+        if (currentAppointmentData && currentAppointmentData.Appointment_Start_Date_Time) {
+            const formattedDate = formatDateTimeForDisplay(currentAppointmentData.Appointment_Start_Date_Time);
             rescheduleFromField.value = formattedDate;
         }
     }
@@ -163,7 +83,7 @@ class RescheduleAppointmentWidget {
     /**
      * Format date time for display (Sep 8, 2025 02:00 PM format)
      */
-    formatDateTimeForDisplay(dateTimeString) {
+    function formatDateTimeForDisplay(dateTimeString) {
         try {
             const date = new Date(dateTimeString);
             
@@ -186,7 +106,7 @@ class RescheduleAppointmentWidget {
     /**
      * Format date time for Zoho CRM API (ISO format)
      */
-    formatDateTimeForAPI(dateTimeString) {
+    function formatDateTimeForAPI(dateTimeString) {
         try {
             const date = new Date(dateTimeString);
             return date.toISOString();
@@ -199,62 +119,77 @@ class RescheduleAppointmentWidget {
     /**
      * Open the reschedule modal
      */
-    openModal() {
-        const modal = document.getElementById('rescheduleModal');
-        if (modal) {
-            modal.classList.add('active');
-            document.body.style.overflow = 'hidden';
-            
-            // Focus on first input field
-            const firstInput = modal.querySelector('input:not([readonly]), select, textarea');
-            if (firstInput) {
-                setTimeout(() => firstInput.focus(), 100);
-            }
+    function openModal() {
+        if (!currentAppointmentData) {
+            showMessage("Please wait for appointment data to load", "error");
+            return;
         }
+        
+        rescheduleModal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Focus on first input field
+        setTimeout(() => {
+            if (newAppointmentDateTime) {
+                newAppointmentDateTime.focus();
+            }
+        }, 100);
     }
 
     /**
      * Close the reschedule modal
      */
-    closeModal() {
-        const modal = document.getElementById('rescheduleModal');
-        if (modal) {
-            modal.classList.remove('active');
-            document.body.style.overflow = '';
-            this.resetForm();
-        }
-    }
-
-    /**
-     * Check if modal is open
-     */
-    isModalOpen() {
-        const modal = document.getElementById('rescheduleModal');
-        return modal && modal.classList.contains('active');
+    function closeModalHandler() {
+        rescheduleModal.classList.remove('active');
+        document.body.style.overflow = '';
+        resetForm();
     }
 
     /**
      * Reset the form
      */
-    resetForm() {
-        const form = document.getElementById('rescheduleForm');
-        if (form) {
-            form.reset();
-            // Repopulate the reschedule from field
-            this.populateCurrentAppointmentData();
+    function resetForm() {
+        if (rescheduleForm) {
+            rescheduleForm.reset();
+            populateRescheduleFromField();
         }
+        
+        // Remove validation error classes
+        const errorFields = document.querySelectorAll('.error-field');
+        errorFields.forEach(field => field.classList.remove('error-field'));
     }
 
     /**
      * Validate the form
      */
-    validateForm() {
-        const newDateTime = document.getElementById('newAppointmentDateTime').value;
-        const rescheduleReason = document.getElementById('rescheduleReason').value;
-        const confirmBtn = document.getElementById('confirmReschedule');
+    function validateForm() {
+        const newDateTime = newAppointmentDateTime.value;
+        const reason = rescheduleReason.value;
         
-        const isValid = newDateTime && rescheduleReason;
+        let isValid = true;
         
+        // Clear previous error states
+        newAppointmentDateTime.classList.remove('error-field');
+        rescheduleReason.classList.remove('error-field');
+        
+        if (!newDateTime) {
+            newAppointmentDateTime.classList.add('error-field');
+            isValid = false;
+        }
+        
+        if (!reason) {
+            rescheduleReason.classList.add('error-field');
+            isValid = false;
+        }
+        
+        // Validate future date
+        if (newDateTime && !isDateInFuture(newDateTime)) {
+            newAppointmentDateTime.classList.add('error-field');
+            showMessage("Please select a future date and time", "error");
+            isValid = false;
+        }
+        
+        // Update confirm button state
         if (confirmBtn) {
             confirmBtn.disabled = !isValid;
         }
@@ -263,107 +198,124 @@ class RescheduleAppointmentWidget {
     }
 
     /**
-     * Handle reschedule appointment
+     * Check if date is in the future
      */
-    async handleReschedule(event) {
-        event.preventDefault();
-        
-        if (!this.validateForm()) {
-            this.showMessage('Please fill in all required fields', 'error');
-            return;
-        }
-
-        if (this.isLoading) return;
-
+    function isDateInFuture(dateString) {
         try {
-            this.setLoading(true);
-
-            const formData = this.getFormData();
-            const result = await this.updateAppointment(formData);
-
-            if (result.success) {
-                this.showMessage('Appointment rescheduled successfully!', 'success');
-                this.closeModal();
-                
-                // Refresh the page to show updated data
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1500);
-            } else {
-                this.showMessage(result.message || 'Failed to reschedule appointment', 'error');
-            }
+            const date = new Date(dateString);
+            const now = new Date();
+            return date > now;
         } catch (error) {
-            console.error('Error rescheduling appointment:', error);
-            this.showMessage('An error occurred while rescheduling the appointment', 'error');
-        } finally {
-            this.setLoading(false);
+            return false;
         }
     }
 
     /**
-     * Get form data
+     * Handle reschedule appointment submission
      */
-    getFormData() {
-        const newDateTime = document.getElementById('newAppointmentDateTime').value;
-        const rescheduleReason = document.getElementById('rescheduleReason').value;
-        const rescheduleNote = document.getElementById('rescheduleNote').value;
+    async function handleReschedule(event) {
+        event.preventDefault();
+        
+        if (!validateForm() || isLoading) {
+            return;
+        }
 
+        if (!currentRecordId || !currentAppointmentData) {
+            showMessage("Missing appointment data. Please refresh and try again.", "error");
+            return;
+        }
+
+        try {
+            setLoading(true);
+
+            const formData = getFormData();
+            const updateResult = await updateAppointmentRecord(formData);
+
+            if (updateResult.success) {
+                showMessage("Appointment rescheduled successfully!", "success");
+                closeModalHandler();
+                
+                // Refresh the record view to show updated data
+                setTimeout(() => {
+                    ZOHO.CRM.UI.Record.refresh();
+                }, 1500);
+            } else {
+                showMessage(updateResult.message || "Failed to reschedule appointment", "error");
+            }
+        } catch (error) {
+            console.error("Error rescheduling appointment:", error);
+            showMessage("An unexpected error occurred while rescheduling", "error");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    /**
+     * Get form data for update
+     */
+    function getFormData() {
         return {
-            recordId: this.currentAppointment.id,
-            originalDateTime: this.currentAppointment.Appointment_Start_Date_Time,
-            newDateTime: newDateTime,
-            rescheduleReason: rescheduleReason,
-            rescheduleNote: rescheduleNote
+            recordId: currentRecordId,
+            originalDateTime: currentAppointmentData.Appointment_Start_Date_Time,
+            newDateTime: newAppointmentDateTime.value,
+            rescheduleReason: rescheduleReason.value,
+            rescheduleNote: rescheduleNote.value
         };
     }
 
     /**
-     * Update appointment in Zoho CRM
+     * Update appointment record in Zoho CRM
      */
-    async updateAppointment(formData) {
+    async function updateAppointmentRecord(formData) {
         try {
             const updateData = {
-                // Update existing fields
-                Appointment_Start_Date_Time: this.formatDateTimeForAPI(formData.newDateTime),
+                // Update the main appointment date/time
+                Appointment_Start_Date_Time: formatDateTimeForAPI(formData.newDateTime),
                 
-                // Add new fields for tracking reschedule history
-                Rescheduled_From: this.formatDateTimeForAPI(formData.originalDateTime),
-                Rescheduled_To: this.formatDateTimeForAPI(formData.newDateTime),
+                // Add reschedule tracking fields
+                Rescheduled_From: formatDateTimeForAPI(formData.originalDateTime),
+                Rescheduled_To: formatDateTimeForAPI(formData.newDateTime),
                 Reschedule_Reason: formData.rescheduleReason,
                 Rescheduled_By: formData.rescheduleNote
             };
 
-            if (typeof ZOHO !== 'undefined' && ZOHO.CRM) {
-                const response = await ZOHO.CRM.API.updateRecord({
-                    Entity: 'Appointment_Bookings',
-                    RecordID: formData.recordId,
-                    APIData: updateData
-                });
-
-                return {
-                    success: response.data && response.data[0] && response.data[0].code === 'SUCCESS',
-                    message: response.data && response.data[0] ? response.data[0].message : 'Unknown error'
-                };
+            // Calculate new end time if duration is available
+            if (currentAppointmentData.Duration) {
+                const newStartTime = new Date(formData.newDateTime);
+                const durationMinutes = parseInt(currentAppointmentData.Duration) || 30;
+                const newEndTime = new Date(newStartTime.getTime() + (durationMinutes * 60000));
+                updateData.Appointment_End_Date_Time = formatDateTimeForAPI(newEndTime.toISOString());
             }
 
-            // Mock success for testing
-            console.log('Mock update data:', updateData);
-            return { success: true, message: 'Appointment updated successfully' };
+            console.log("Updating record with data:", updateData);
+
+            const response = await ZOHO.CRM.API.updateRecord({
+                Entity: "Appointment_Bookings",
+                RecordID: formData.recordId,
+                APIData: updateData
+            });
+
+            console.log("Update response:", response);
+
+            if (response.data && response.data[0] && response.data[0].code === "SUCCESS") {
+                return { success: true, message: "Appointment rescheduled successfully" };
+            } else {
+                const errorMessage = response.data?.[0]?.message || "Unknown error occurred";
+                return { success: false, message: errorMessage };
+            }
 
         } catch (error) {
-            console.error('Error updating appointment:', error);
-            return { success: false, message: error.message || 'Failed to update appointment' };
+            console.error("Error updating appointment record:", error);
+            return { success: false, message: error.message || "Failed to update appointment" };
         }
     }
 
     /**
      * Set loading state
      */
-    setLoading(loading) {
-        this.isLoading = loading;
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        const confirmBtn = document.getElementById('confirmReschedule');
-
+    function setLoading(loading) {
+        isLoading = loading;
+        
         if (loadingOverlay) {
             if (loading) {
                 loadingOverlay.classList.add('active');
@@ -380,9 +332,8 @@ class RescheduleAppointmentWidget {
     /**
      * Show message to user
      */
-    showMessage(message, type = 'info') {
-        const container = document.getElementById('messageContainer');
-        if (!container) return;
+    function showMessage(message, type = 'info') {
+        if (!messageContainer) return;
 
         const messageDiv = document.createElement('div');
         messageDiv.className = `message message-${type}`;
@@ -391,7 +342,7 @@ class RescheduleAppointmentWidget {
             <button class="message-close" onclick="this.parentElement.remove()">&times;</button>
         `;
 
-        container.appendChild(messageDiv);
+        messageContainer.appendChild(messageDiv);
 
         // Auto remove after 5 seconds
         setTimeout(() => {
@@ -402,133 +353,86 @@ class RescheduleAppointmentWidget {
     }
 
     /**
-     * Initialize Zoho CRM widget
+     * Validate business hours (optional)
      */
-    static async initZohoWidget() {
-        try {
-            if (typeof ZOHO !== 'undefined' && ZOHO.embeddedApp) {
-                await ZOHO.embeddedApp.init();
-                
-                // Set widget dimensions
-                ZOHO.embeddedApp.on('PageLoad', function(data) {
-                    console.log('Zoho widget loaded:', data);
-                });
+    function validateBusinessHours(dateTimeString) {
+        const date = new Date(dateTimeString);
+        const hour = date.getHours();
+        const day = date.getDay(); // 0 = Sunday, 6 = Saturday
+        
+        // Example: Only allow appointments Monday-Friday, 9 AM - 5 PM
+        if (day === 0 || day === 6) {
+            return confirm('The selected date is on a weekend. Do you want to continue?');
+        }
+        
+        if (hour < 9 || hour >= 17) {
+            return confirm('The selected time is outside business hours (9 AM - 5 PM). Do you want to continue?');
+        }
+        
+        return true;
+    }
+
+    // Event Listeners
+    if (rescheduleBtn) {
+        rescheduleBtn.addEventListener('click', openModal);
+    }
+
+    if (closeModal) {
+        closeModal.addEventListener('click', closeModalHandler);
+    }
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', closeModalHandler);
+    }
+
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', handleReschedule);
+    }
+
+    // Close modal when clicking outside
+    if (rescheduleModal) {
+        rescheduleModal.addEventListener('click', (e) => {
+            if (e.target === rescheduleModal) {
+                closeModalHandler();
             }
-        } catch (error) {
-            console.error('Error initializing Zoho widget:', error);
-        }
+        });
     }
-}
 
-// Utility functions
-const Utils = {
-    /**
-     * Debounce function
-     */
-    debounce: (func, wait) => {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
-    },
-
-    /**
-     * Format date for datetime-local input
-     */
-    formatDateForInput: (dateString) => {
-        try {
-            const date = new Date(dateString);
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
-            
-            return `${year}-${month}-${day}T${hours}:${minutes}`;
-        } catch (error) {
-            console.error('Error formatting date for input:', error);
-            return '';
+    // Handle ESC key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && rescheduleModal && rescheduleModal.classList.contains('active')) {
+            closeModalHandler();
         }
-    },
+    });
 
-    /**
-     * Validate date is in the future
-     */
-    isDateInFuture: (dateString) => {
-        try {
-            const date = new Date(dateString);
-            const now = new Date();
-            return date > now;
-        } catch (error) {
-            return false;
-        }
-    }
-};
-
-// Initialize the widget when DOM is loaded
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        // Initialize Zoho widget if available
-        await RescheduleAppointmentWidget.initZohoWidget();
-        
-        // Create widget instance
-        window.rescheduleWidget = new RescheduleAppointmentWidget();
-        
-        console.log('Reschedule Appointment Widget initialized successfully');
-    } catch (error) {
-        console.error('Error initializing widget:', error);
-    }
-});
-
-// Add additional validation for new appointment date
-document.addEventListener('DOMContentLoaded', () => {
-    const newDateTimeInput = document.getElementById('newAppointmentDateTime');
-    
-    if (newDateTimeInput) {
-        newDateTimeInput.addEventListener('change', (e) => {
+    // Form validation on input
+    if (newAppointmentDateTime) {
+        newAppointmentDateTime.addEventListener('change', (e) => {
             const selectedDate = e.target.value;
             
-            if (selectedDate && !Utils.isDateInFuture(selectedDate)) {
-                alert('Please select a future date and time for the appointment.');
+            if (selectedDate && !isDateInFuture(selectedDate)) {
+                showMessage('Please select a future date and time for the appointment.', 'error');
                 e.target.value = '';
                 return;
             }
             
-            // Additional validation: Check if it's during business hours (optional)
-            if (selectedDate) {
-                const date = new Date(selectedDate);
-                const hour = date.getHours();
-                const day = date.getDay(); // 0 = Sunday, 6 = Saturday
-                
-                // Example: Only allow appointments Monday-Friday, 9 AM - 5 PM
-                if (day === 0 || day === 6) {
-                    if (confirm('The selected date is on a weekend. Do you want to continue?')) {
-                        return;
-                    } else {
-                        e.target.value = '';
-                        return;
-                    }
-                }
-                
-                if (hour < 9 || hour >= 17) {
-                    if (confirm('The selected time is outside business hours (9 AM - 5 PM). Do you want to continue?')) {
-                        return;
-                    } else {
-                        e.target.value = '';
-                        return;
-                    }
-                }
+            // Business hours validation
+            if (selectedDate && !validateBusinessHours(selectedDate)) {
+                e.target.value = '';
+                return;
             }
+            
+            validateForm();
         });
     }
+
+    if (rescheduleReason) {
+        rescheduleReason.addEventListener('change', validateForm);
+    }
+
+    // Initialize the widget
+    initializeWidget();
 });
 
-// Export for use in other scripts if needed
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { RescheduleAppointmentWidget, Utils };
-}
+// Initialize Zoho embedded app
+ZOHO.embeddedApp.init();
