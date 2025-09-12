@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reschedule Appointment</title>
+    <script src="https://live.zwidgets.com/js-sdk/1.1/ZohoEmbededAppSDK.min.js"></script>
+    <link rel="stylesheet" href="rescheduleAppointment.css">
+</head>
+<body>
+
+    <div id="rescheduleModal" class="modal-overlay">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2>Reschedule Appointment</h2>
+                <button id="closeModal" class="close-button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <form id="rescheduleForm">
+                    <div class="form-group">
+                        <label for="rescheduleFrom" class="form-label">
+                            Reschedule From <span class="required">*</span>
+                        </label>
+                        <input 
+                            type="text" 
+                            id="rescheduleFrom" 
+                            name="rescheduleFrom" 
+                            class="form-input readonly" 
+                            readonly
+                            placeholder="Current appointment date & time"
+                        />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="newAppointmentDateTime" class="form-label">
+                            New Appointment Start Date & Time <span class="required">*</span>
+                        </label>
+                        <div class="datetime-picker-container">
+                            <div class="date-time-inputs">
+                                <input 
+                                    type="text" 
+                                    id="appointmentDate" 
+                                    name="appointmentDate" 
+                                    class="form-input date-input" 
+                                    placeholder="MMM D, YYYY"
+                                    readonly
+                                    required
+                                />
+                                <select id="appointmentTime" name="appointmentTime" class="form-select time-select" required>
+                                    <option value="">Select Time</option>
+                                </select>
+                            </div>
+                            <div id="calendarContainer" class="calendar-container" style="display: none;">
+                                <div class="calendar-header">
+                                    <button type="button" id="prevMonth" class="calendar-nav">&lt;</button>
+                                    <span id="currentMonth" class="calendar-month"></span>
+                                    <button type="button" id="nextMonth" class="calendar-nav">&gt;</button>
+                                </div>
+                                <div class="calendar-weekdays">
+                                    <div class="weekday">Mon</div>
+                                    <div class="weekday">Tue</div>
+                                    <div class="weekday">Wed</div>
+                                    <div class="weekday">Thu</div>
+                                    <div class="weekday">Fri</div>
+                                    <div class="weekday">Sat</div>
+                                    <div class="weekday">Sun</div>
+                                </div>
+                                <div id="calendarDays" class="calendar-days"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="rescheduleReason" class="form-label">
+                            Reschedule Reason <span class="required">*</span>
+                        </label>
+                        <select id="rescheduleReason" name="rescheduleReason" class="form-select" required>
+                            <option value="">Select Reason</option>
+                            <option value="By Patient">By Patient</option>
+                            <option value="By Doctor">By Doctor</option>
+                            <option value="By Team">By Team</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="rescheduleNote" class="form-label">
+                            Reschedule Note
+                        </label>
+                        <textarea 
+                            id="rescheduleNote" 
+                            name="rescheduleNote" 
+                            class="form-textarea" 
+                            rows="4"
+                            placeholder="Enter additional notes for rescheduling..."
+                        ></textarea>
+                    </div>
+                </form>
+            </div>
+            
+            <div class="modal-footer">
+                <button type="button" id="cancelBtn" class="btn btn-cancel">Cancel</button>
+                <button type="submit" id="confirmReschedule" class="btn btn-primary">
+                    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20,6 9,17 4,12"></polyline>
+                    </svg>
+                    Reschedule Appointment
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Rescheduling appointment...</p>
+        </div>
+    </div>
+
+    <div id="messageContainer" class="message-container"></div>
+
+    <script src="rescheduleAppointment.js"></script>
+</body>
+</html>
