@@ -264,10 +264,17 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
         // Start with a copy of the existing record data
         const updateData = { ...currentAppointmentData };
 
-        // Remove system fields that shouldn't be updated
-        const systemFields = ['id', 'Created_Time', 'Modified_Time', 'Created_By', 'Modified_By', '$approved', '$approval', '$approval_state'];
+        // Remove system fields that shouldn't be updated (but keep 'id' as it's required)
+        const systemFields = ['Created_Time', 'Modified_Time', 'Created_By', 'Modified_By', '$approved', '$approval', '$approval_state'];
         systemFields.forEach(field => {
             delete updateData[field];
+        });
+
+        // Clean up dollar-prefixed system fields that might cause issues
+        Object.keys(updateData).forEach(key => {
+            if (key.startsWith('$') && key !== '$currency_symbol') {
+                delete updateData[key];
+            }
         });
 
         // Update the fields we want to change
