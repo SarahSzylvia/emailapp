@@ -90,13 +90,39 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
     function formatDateTimeForAPI(dateObject) {
         if (!dateObject) return null;
         
-        // Get IST offset (+05:30)
-        const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
-        const istDate = new Date(dateObject.getTime() + istOffset);
+        // Create IST date by adjusting for timezone offset
+        const istOffset = 5.5 * 60; // IST is UTC+5:30 in minutes
+        const localOffset = dateObject.getTimezoneOffset(); // Local timezone offset in minutes
+        const istDate = new Date(dateObject.getTime() + (localOffset + istOffset) * 60000);
         
-        // Format as ISO string but replace Z with +05:30
-        const isoString = istDate.toISOString();
-        return isoString.replace('Z', '+05:30');
+        // Format as YYYY-MM-DDTHH:mm:ss+05:30 (proper ISO format for Zoho)
+        const year = istDate.getFullYear();
+        const month = String(istDate.getMonth() + 1).padStart(2, '0');
+        const day = String(istDate.getDate()).padStart(2, '0');
+        const hours = String(istDate.getHours()).padStart(2, '0');
+        const minutes = String(istDate.getMinutes()).padStart(2, '0');
+        const seconds = String(istDate.getSeconds()).padStart(2, '0');
+        
+        return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}+05:30`;
+    }
+
+    /** Ensure proper ISO date format for queries **/
+    function ensureISOFormat(dateTimeString) {
+        if (!dateTimeString) return null;
+        
+        try {
+            const date = new Date(dateTimeString);
+            if (isNaN(date.getTime())) {
+                console.error('Invalid date:', dateTimeString);
+                return null;
+            }
+            
+            // Return in proper ISO format
+            return formatDateTimeForAPI(date);
+        } catch (error) {
+            console.error('Date formatting error:', error);
+            return null;
+        }
     }
 
     /** Open modal **/
@@ -302,8 +328,16 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
                 };
             }
             
-            const startTimeStr = formatDateTimeForAPI(newStartTime);
-            const endTimeStr = formatDateTimeForAPI(newEndTime);
+            const startTimeStr = ensureISOFormat(formatDateTimeForAPI(newStartTime));
+            const endTimeStr = ensureISOFormat(formatDateTimeForAPI(newEndTime));
+
+            if (!startTimeStr || !endTimeStr) {
+                console.error('Failed to format date/time for query');
+                return { 
+                    isValid: false, 
+                    message: "❌ Invalid date/time format for validation." 
+                };
+            }
 
             console.log('=== OVERLAP CHECK DEBUG ===');
             console.log('Checking for overlapping appointments between', startTimeStr, 'and', endTimeStr);
@@ -360,29 +394,62 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
                 console.log('Attempt', searchAttempt, ': Trying COQL...');
                 
                 if (typeof ZOHO !== 'undefined' && ZOHO.CRM && ZOHO.CRM.COQL && typeof ZOHO.CRM.COQL.selectRecords === 'function') {
-                    const queryString = `select id, Appointment_Start_Date_Time, Appointment_End_Date_Time, ` +
-                                     `Doctor_Name, Appointment_For from Appointment_Bookings ` +
-                                     `where (Appointment_Start_Date_Time < '${endTimeStr}' ` +
-                                     `and Appointment_End_Date_Time > '${startTimeStr}') ` +
-                                     `and (Doctor_Name.id = '${doctorId}' or Appointment_For.id = '${patientId}') ` +
-                                     `and id != '${currentRecordId}' limit 10`;
+                    // Try multiple COQL query formats
+                    const queryFormats = [
+                        // Format 1: Using lookup field IDs
+                        `SELECT id, Appointment_Start_Date_Time, Appointment_End_Date_Time, ` +
+                        `Doctor_Name, Appointment_For FROM Appointment_Bookings ` +
+                        `WHERE (Appointment_Start_Date_Time <= '${endTimeStr}' ` +
+                        `AND Appointment_End_Date_Time >= '${startTimeStr}') ` +
+                        `AND (Doctor_Name.id = '${doctorId}' OR Appointment_For.id = '${patientId}') ` +
+                        `AND id != '${currentRecordId}' ` +
+                        `ORDER BY Appointment_Start_Date_Time ASC LIMIT 10`,
+                        
+                        // Format 2: Using lookup field names directly
+                        `SELECT id, Appointment_Start_Date_Time, Appointment_End_Date_Time, ` +
+                        `Doctor_Name, Appointment_For FROM Appointment_Bookings ` +
+                        `WHERE (Appointment_Start_Date_Time <= '${endTimeStr}' ` +
+                        `AND Appointment_End_Date_Time >= '${startTimeStr}') ` +
+                        `AND (Doctor_Name = '${doctorId}' OR Appointment_For = '${patientId}') ` +
+                        `AND id != '${currentRecordId}' ` +
+                        `ORDER BY Appointment_Start_Date_Time ASC LIMIT 10`,
+                        
+                        // Format 3: Simplified query without OR condition
+                        `SELECT id, Appointment_Start_Date_Time, Appointment_End_Date_Time, ` +
+                        `Doctor_Name, Appointment_For FROM Appointment_Bookings ` +
+                        `WHERE (Appointment_Start_Date_Time <= '${endTimeStr}' ` +
+                        `AND Appointment_End_Date_Time >= '${startTimeStr}') ` +
+                        `AND Doctor_Name.id = '${doctorId}' ` +
+                        `AND id != '${currentRecordId}' ` +
+                        `ORDER BY Appointment_Start_Date_Time ASC LIMIT 10`
+                    ];
                     
-                    console.log('COQL Query:', queryString);
-                    
-                    const queryResponse = await ZOHO.CRM.COQL.selectRecords({
-                        select_query: queryString
-                    });
+                    for (let i = 0; i < queryFormats.length; i++) {
+                        try {
+                            const queryString = queryFormats[i];
+                            console.log(`COQL Query Format ${i + 1}:`, queryString);
+                            
+                            const queryResponse = await ZOHO.CRM.COQL.selectRecords({
+                                select_query: queryString
+                            });
 
-                    console.log('COQL Response:', JSON.stringify(queryResponse, null, 2));
+                            console.log(`COQL Response Format ${i + 1}:`, JSON.stringify(queryResponse, null, 2));
 
-                    if (queryResponse && queryResponse.data && Array.isArray(queryResponse.data)) {
-                        if (queryResponse.data.length > 0) {
-                            console.log('COQL found', queryResponse.data.length, 'overlapping appointments');
-                            const overlap = queryResponse.data[0];
-                            return handleOverlap(overlap, doctorId, doctorName, patientId, patientName);
-                        } else {
-                            console.log('COQL: No overlapping appointments found');
-                            return { isValid: true };
+                            if (queryResponse && queryResponse.data && Array.isArray(queryResponse.data)) {
+                                if (queryResponse.data.length > 0) {
+                                    console.log(`COQL Format ${i + 1} found`, queryResponse.data.length, 'overlapping appointments');
+                                    const overlap = queryResponse.data[0];
+                                    return handleOverlap(overlap, doctorId, doctorName, patientId, patientName);
+                                } else {
+                                    console.log(`COQL Format ${i + 1}: No overlapping appointments found`);
+                                    return { isValid: true };
+                                }
+                            }
+                        } catch (formatError) {
+                            console.warn(`COQL Format ${i + 1} failed:`, formatError);
+                            if (i === queryFormats.length - 1) {
+                                throw formatError; // Re-throw on last attempt
+                            }
                         }
                     }
                 } else {
@@ -390,6 +457,11 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
                 }
             } catch (coqlError) {
                 console.warn('COQL query failed:', coqlError);
+                console.error('COQL Error Details:', {
+                    message: coqlError.message,
+                    code: coqlError.code,
+                    details: coqlError.details
+                });
             }
             
             // Approach 2: Try searchRecords API with different criteria formats
@@ -397,8 +469,14 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
                 searchAttempt = 2;
                 console.log('Attempt', searchAttempt, ': Trying searchRecords API...');
                 
-                // Format 1: Simple criteria format
-                let criteria = `((Appointment_Start_Date_Time:less_than:${endTimeStr}) and (Appointment_End_Date_Time:greater_than:${startTimeStr})) and ((Doctor_Name:equals:${doctorId}) or (Appointment_For:equals:${patientId}))`;
+                // Format 1: Proper SearchRecords criteria format
+                let criteria = `((Appointment_Start_Date_Time:before:${endTimeStr}) and ` +
+                              `(Appointment_End_Date_Time:after:${startTimeStr})) and ` +
+                              `((Doctor_Name.id:equals:${doctorId}) or (Appointment_For.id:equals:${patientId}))`;
+                
+                if (currentRecordId) {
+                    criteria += ` and (id:notequals:${currentRecordId})`;
+                }
                 
                 console.log('Search Criteria (Format 1):', criteria);
                 
@@ -411,10 +489,16 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
                 }).catch(async (error1) => {
                     console.warn('Search format 1 failed:', error1);
                     
-                    // Format 2: Alternative criteria format
-                    criteria = `(Appointment_Start_Date_Time:less_than:${endTimeStr}) and (Appointment_End_Date_Time:greater_than:${startTimeStr}) and ((Doctor_Name:equals:${doctorId}) or (Appointment_For:equals:${patientId}))`;
+                    // Format 2: Alternative criteria format without nested parentheses
+                    criteria = `(Appointment_Start_Date_Time:before:${endTimeStr}) and ` +
+                              `(Appointment_End_Date_Time:after:${startTimeStr}) and ` +
+                              `(Doctor_Name.id:equals:${doctorId})`;
                     
-                    console.log('Search Criteria (Format 2):', criteria);
+                    if (currentRecordId) {
+                        criteria += ` and (id:notequals:${currentRecordId})`;
+                    }
+                    
+                    console.log('Search Criteria (Format 2 - Doctor only):', criteria);
                     
                     return await ZOHO.CRM.API.searchRecords({
                         Entity: 'Appointment_Bookings',
@@ -425,16 +509,37 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
                     }).catch(async (error2) => {
                         console.warn('Search format 2 failed:', error2);
                         
-                        // Format 3: Using word search as last resort
-                        const searchWord = doctorName.split(' ')[0]; // Use first name for word search
-                        console.log('Search Criteria (Format 3 - Word):', searchWord);
+                        // Format 3: Patient only search
+                        criteria = `(Appointment_Start_Date_Time:before:${endTimeStr}) and ` +
+                                  `(Appointment_End_Date_Time:after:${startTimeStr}) and ` +
+                                  `(Appointment_For.id:equals:${patientId})`;
+                        
+                        if (currentRecordId) {
+                            criteria += ` and (id:notequals:${currentRecordId})`;
+                        }
+                        
+                        console.log('Search Criteria (Format 3 - Patient only):', criteria);
                         
                         return await ZOHO.CRM.API.searchRecords({
                             Entity: 'Appointment_Bookings',
-                            Type: 'word',
-                            Query: searchWord,
+                            Type: 'criteria',
+                            Query: criteria,
                             page: 1,
-                            per_page: 50
+                            per_page: 10
+                        }).catch(async (error3) => {
+                            console.warn('Search format 3 failed:', error3);
+                            
+                            // Format 4: Using word search as last resort
+                            const searchWord = doctorName.split(' ')[0]; // Use first name for word search
+                            console.log('Search Criteria (Format 4 - Word):', searchWord);
+                            
+                            return await ZOHO.CRM.API.searchRecords({
+                                Entity: 'Appointment_Bookings',
+                                Type: 'word',
+                                Query: searchWord,
+                                page: 1,
+                                per_page: 50
+                            });
                         });
                     });
                 });
