@@ -6,6 +6,13 @@ async function checkOverlappingAppointments(newStartTime, newEndTime) {
         const patientId = currentAppointmentData.Appointment_For?.id;
         const patientName = currentAppointmentData.Appointment_For?.name || "Patient";
         
+        // DEBUG: Check currentRecordId format
+        console.log('DEBUG currentRecordId:', currentRecordId, 'Type:', typeof currentRecordId, 'IsArray:', Array.isArray(currentRecordId));
+        
+        // Fix currentRecordId if it's an array
+        const recordId = Array.isArray(currentRecordId) ? currentRecordId[0] : currentRecordId;
+        console.log('Using Record ID:', recordId);
+        
         if (!doctorId || !patientId) {
             console.error('Missing required IDs for overlap check:', { doctorId, patientId });
             return { 
@@ -44,7 +51,7 @@ async function checkOverlappingAppointments(newStartTime, newEndTime) {
             end: newEnd.toISOString(),
             doctorId: doctorId,
             patientId: patientId,
-            currentRecordId: currentRecordId
+            currentRecordId: recordId
         });
         
         let appointments = [];
@@ -54,18 +61,18 @@ async function checkOverlappingAppointments(newStartTime, newEndTime) {
         try {
             // First, check if we're in external mode and use searchRecords API
             if (typeof ZOHO.CRM.CONFIG !== 'undefined' && ZOHO.CRM.CONFIG && ZOHO.CRM.CONFIG.mode === 'EXTERNAL') {
-                appointments = await getAppointmentsViaSearch(doctorId, patientId);
+                appointments = await getAppointmentsViaSearch(doctorId, patientId, recordId);
                 searchMethod = 'searchRecords';
             } else {
                 // Try using COQL if available
                 try {
                     if (ZOHO.CRM.COQL && typeof ZOHO.CRM.COQL.selectRecords === 'function') {
-                        appointments = await getAppointmentsViaCOQL(doctorId, patientId);
+                        appointments = await getAppointmentsViaCOQL(doctorId, patientId, recordId);
                         searchMethod = 'COQL';
                     }
                 } catch (coqlError) {
                     console.warn('COQL query failed, falling back to search:', coqlError);
-                    appointments = await getAppointmentsViaSearch(doctorId, patientId);
+                    appointments = await getAppointmentsViaSearch(doctorId, patientId, recordId);
                     searchMethod = 'searchRecords (fallback)';
                 }
             }
@@ -87,7 +94,7 @@ async function checkOverlappingAppointments(newStartTime, newEndTime) {
             
             try {
                 // Validate appointment data
-                if (!appointment.id || appointment.id === currentRecordId) {
+                if (!appointment.id || appointment.id === recordId) {
                     console.log(`Skipping appointment ${i + 1}: same as current record`);
                     continue;
                 }
@@ -186,9 +193,9 @@ function checkTimeOverlap(newStart, newEnd, apptStart, apptEnd) {
 }
 
 // Helper function to get appointments via Search API
-async function getAppointmentsViaSearch(doctorId, patientId) {
+async function getAppointmentsViaSearch(doctorId, patientId, recordId) {
     const criteria = `(Doctor_Name.id = '${doctorId}' or Appointment_For.id = '${patientId}') ` +
-                    `and id != '${currentRecordId}'`;
+                    `and id != '${recordId}'`;
     
     console.log('Search Criteria:', criteria);
     
@@ -214,11 +221,11 @@ async function getAppointmentsViaSearch(doctorId, patientId) {
 }
 
 // Helper function to get appointments via COQL
-async function getAppointmentsViaCOQL(doctorId, patientId) {
+async function getAppointmentsViaCOQL(doctorId, patientId, recordId) {
     const queryString = `select id, Appointment_Start_Date_Time, Appointment_End_Date_Time, ` +
                        `Doctor_Name, Appointment_For from Appointment_Bookings ` +
                        `where (Doctor_Name.id = '${doctorId}' or Appointment_For.id = '${patientId}') ` +
-                       `and id != '${currentRecordId}'`;
+                       `and id != '${recordId}'`;
     
     console.log('COQL Query:', queryString);
     
