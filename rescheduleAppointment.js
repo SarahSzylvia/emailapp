@@ -254,6 +254,337 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
         return combined;
     }
 
+    /** Calculate end date time based on start time and duration **/
+    function calculateEndDateTime(startDateTime, durationMinutes = 30) {
+        if (!startDateTime) return null;
+        
+        console.log('=== TIME CALCULATION DEBUG ===');
+        console.log('Start time:', startDateTime);
+        console.log('Duration minutes:', durationMinutes);
+        
+        const endDateTime = new Date(startDateTime.getTime() + (durationMinutes * 60000));
+        
+        console.log('Calculated end time:', endDateTime);
+        return endDateTime;
+    }
+
+    /** Client-side validation with specific error messages **/
+    async function validateAppointmentAvailability(newStartTime, newEndTime) {
+        try {
+            // Check Overlapping Appointments
+            const overlapCheck = await checkOverlappingAppointments(newStartTime, newEndTime);
+            if (!overlapCheck.isValid) {
+                showMessage(overlapCheck.message, "error");
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Validation error:', error);
+            showMessage("Unable to validate appointment availability. Please try again.", "error");
+            return false;
+        }
+    }
+
+    /** Check Overlapping Appointments with comprehensive approach **/
+    async function checkOverlappingAppointments(newStartTime, newEndTime) {
+        try {
+            const doctorId = currentAppointmentData.Doctor_Name?.id;
+            const doctorName = currentAppointmentData.Doctor_Name?.name || "Doctor";
+            const patientId = currentAppointmentData.Appointment_For?.id;
+            const patientName = currentAppointmentData.Appointment_For?.name || "Patient";
+            
+            if (!doctorId || !patientId) {
+                console.error('Missing required IDs for overlap check:', { doctorId, patientId });
+                return { 
+                    isValid: false, 
+                    message: "❌ Missing required information to check for overlapping appointments." 
+                };
+            }
+            
+            const startTimeStr = formatDateTimeForAPI(newStartTime);
+            const endTimeStr = formatDateTimeForAPI(newEndTime);
+
+            console.log('=== OVERLAP CHECK DEBUG ===');
+            console.log('Checking for overlapping appointments between', startTimeStr, 'and', endTimeStr);
+            console.log('Doctor ID:', doctorId, 'Patient ID:', patientId);
+            console.log('Current Record ID (to exclude):', currentRecordId);
+            
+            // Helper function to handle overlap response
+            function handleOverlap(overlap, doctorId, doctorName, patientId, patientName) {
+                console.log('=== OVERLAP FOUND ===');
+                console.log('Overlapping appointment:', overlap);
+                
+                const startDT = new Date(overlap.Appointment_Start_Date_Time);
+                const endDT = new Date(overlap.Appointment_End_Date_Time);
+                const startStr = startDT.toLocaleDateString('en-GB', { 
+                    day: '2-digit', 
+                    month: 'short', 
+                    year: 'numeric' 
+                }) + ' ' + startDT.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    hour12: true 
+                });
+                const endStr = endDT.toLocaleTimeString('en-US', { 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    hour12: true 
+                });
+                
+                let conflictMsg = "";
+                if (overlap.Doctor_Name?.id === doctorId && overlap.Appointment_For?.id === patientId) {
+                    conflictMsg = `${doctorName} and ${patientName} already have an appointment`;
+                } else if (overlap.Doctor_Name?.id === doctorId) {
+                    conflictMsg = `${doctorName} already has an appointment`;
+                } else if (overlap.Appointment_For?.id === patientId) {
+                    conflictMsg = `${patientName} already has an appointment`;
+                } else {
+                    conflictMsg = "An overlapping appointment was found";
+                }
+                
+                console.log('Conflict message:', conflictMsg);
+                return { 
+                    isValid: false, 
+                    message: `❌ ${conflictMsg} from ${startStr} to ${endStr}. Please choose a different time.` 
+                };
+            }
+
+            // Try multiple approaches to find overlapping appointments
+            let searchResponse = null;
+            let searchAttempt = 0;
+            
+            // Approach 1: Try COQL first (most reliable)
+            try {
+                searchAttempt = 1;
+                console.log('Attempt', searchAttempt, ': Trying COQL...');
+                
+                if (typeof ZOHO !== 'undefined' && ZOHO.CRM && ZOHO.CRM.COQL && typeof ZOHO.CRM.COQL.selectRecords === 'function') {
+                    const queryString = `select id, Appointment_Start_Date_Time, Appointment_End_Date_Time, ` +
+                                     `Doctor_Name, Appointment_For from Appointment_Bookings ` +
+                                     `where (Appointment_Start_Date_Time < '${endTimeStr}' ` +
+                                     `and Appointment_End_Date_Time > '${startTimeStr}') ` +
+                                     `and (Doctor_Name.id = '${doctorId}' or Appointment_For.id = '${patientId}') ` +
+                                     `and id != '${currentRecordId}' limit 10`;
+                    
+                    console.log('COQL Query:', queryString);
+                    
+                    const queryResponse = await ZOHO.CRM.COQL.selectRecords({
+                        select_query: queryString
+                    });
+
+                    console.log('COQL Response:', JSON.stringify(queryResponse, null, 2));
+
+                    if (queryResponse && queryResponse.data && Array.isArray(queryResponse.data)) {
+                        if (queryResponse.data.length > 0) {
+                            console.log('COQL found', queryResponse.data.length, 'overlapping appointments');
+                            const overlap = queryResponse.data[0];
+                            return handleOverlap(overlap, doctorId, doctorName, patientId, patientName);
+                        } else {
+                            console.log('COQL: No overlapping appointments found');
+                            return { isValid: true };
+                        }
+                    }
+                } else {
+                    console.log('COQL API not available');
+                }
+            } catch (coqlError) {
+                console.warn('COQL query failed:', coqlError);
+            }
+            
+            // Approach 2: Try searchRecords API with different criteria formats
+            try {
+                searchAttempt = 2;
+                console.log('Attempt', searchAttempt, ': Trying searchRecords API...');
+                
+                // Format 1: Simple criteria format
+                let criteria = `((Appointment_Start_Date_Time:less_than:${endTimeStr}) and (Appointment_End_Date_Time:greater_than:${startTimeStr})) and ((Doctor_Name:equals:${doctorId}) or (Appointment_For:equals:${patientId}))`;
+                
+                console.log('Search Criteria (Format 1):', criteria);
+                
+                searchResponse = await ZOHO.CRM.API.searchRecords({
+                    Entity: 'Appointment_Bookings',
+                    Type: 'criteria',
+                    Query: criteria,
+                    page: 1,
+                    per_page: 10
+                }).catch(async (error1) => {
+                    console.warn('Search format 1 failed:', error1);
+                    
+                    // Format 2: Alternative criteria format
+                    criteria = `(Appointment_Start_Date_Time:less_than:${endTimeStr}) and (Appointment_End_Date_Time:greater_than:${startTimeStr}) and ((Doctor_Name:equals:${doctorId}) or (Appointment_For:equals:${patientId}))`;
+                    
+                    console.log('Search Criteria (Format 2):', criteria);
+                    
+                    return await ZOHO.CRM.API.searchRecords({
+                        Entity: 'Appointment_Bookings',
+                        Type: 'criteria',
+                        Query: criteria,
+                        page: 1,
+                        per_page: 10
+                    }).catch(async (error2) => {
+                        console.warn('Search format 2 failed:', error2);
+                        
+                        // Format 3: Using word search as last resort
+                        const searchWord = doctorName.split(' ')[0]; // Use first name for word search
+                        console.log('Search Criteria (Format 3 - Word):', searchWord);
+                        
+                        return await ZOHO.CRM.API.searchRecords({
+                            Entity: 'Appointment_Bookings',
+                            Type: 'word',
+                            Query: searchWord,
+                            page: 1,
+                            per_page: 50
+                        });
+                    });
+                });
+
+                console.log('Search Response:', JSON.stringify(searchResponse, null, 2));
+
+                if (searchResponse && searchResponse.data && Array.isArray(searchResponse.data)) {
+                    console.log('Search API returned', searchResponse.data.length, 'records');
+                    
+                    // Filter the results manually for overlaps (especially important for word search)
+                    const overlappingAppointments = searchResponse.data.filter(appointment => {
+                        // Skip the current appointment being rescheduled
+                        if (appointment.id === currentRecordId) {
+                            return false;
+                        }
+                        
+                        // Check if this appointment involves the same doctor or patient
+                        const sameDoctor = appointment.Doctor_Name?.id === doctorId;
+                        const samePatient = appointment.Appointment_For?.id === patientId;
+                        
+                        if (!sameDoctor && !samePatient) {
+                            return false;
+                        }
+                        
+                        // Check for time overlap
+                        const existingStart = new Date(appointment.Appointment_Start_Date_Time);
+                        const existingEnd = new Date(appointment.Appointment_End_Date_Time);
+                        
+                        // Two appointments overlap if:
+                        // newStart < existingEnd AND newEnd > existingStart
+                        const hasOverlap = newStartTime < existingEnd && newEndTime > existingStart;
+                        
+                        console.log('Checking appointment:', appointment.id);
+                        console.log('  Existing:', existingStart.toISOString(), 'to', existingEnd.toISOString());
+                        console.log('  New:', newStartTime.toISOString(), 'to', newEndTime.toISOString());
+                        console.log('  Same doctor:', sameDoctor, 'Same patient:', samePatient);
+                        console.log('  Has overlap:', hasOverlap);
+                        
+                        return hasOverlap;
+                    });
+                    
+                    if (overlappingAppointments.length > 0) {
+                        console.log('Manual filter found', overlappingAppointments.length, 'overlapping appointments');
+                        const overlap = overlappingAppointments[0];
+                        return handleOverlap(overlap, doctorId, doctorName, patientId, patientName);
+                    } else {
+                        console.log('Manual filter: No overlapping appointments found');
+                    }
+                } else {
+                    console.log('Search API: Invalid or empty response');
+                }
+            } catch (searchError) {
+                console.error('All search attempts failed:', searchError);
+            }
+            
+            // Approach 3: Try getAllRecords as absolute fallback
+            try {
+                searchAttempt = 3;
+                console.log('Attempt', searchAttempt, ': Trying getAllRecords as fallback...');
+                
+                const allRecordsResponse = await ZOHO.CRM.API.getAllRecords({
+                    Entity: 'Appointment_Bookings',
+                    page: 1,
+                    per_page: 200
+                });
+
+                console.log('GetAllRecords Response:', JSON.stringify(allRecordsResponse, null, 2));
+
+                if (allRecordsResponse && allRecordsResponse.data && Array.isArray(allRecordsResponse.data)) {
+                    console.log('GetAllRecords returned', allRecordsResponse.data.length, 'records');
+                    
+                    // Filter for overlapping appointments
+                    const overlappingAppointments = allRecordsResponse.data.filter(appointment => {
+                        // Skip the current appointment being rescheduled
+                        if (appointment.id === currentRecordId) {
+                            return false;
+                        }
+                        
+                        // Skip appointments without required fields
+                        if (!appointment.Appointment_Start_Date_Time || !appointment.Appointment_End_Date_Time) {
+                            return false;
+                        }
+                        
+                        // Check if this appointment involves the same doctor or patient
+                        const sameDoctor = appointment.Doctor_Name?.id === doctorId;
+                        const samePatient = appointment.Appointment_For?.id === patientId;
+                        
+                        if (!sameDoctor && !samePatient) {
+                            return false;
+                        }
+                        
+                        // Check for time overlap
+                        const existingStart = new Date(appointment.Appointment_Start_Date_Time);
+                        const existingEnd = new Date(appointment.Appointment_End_Date_Time);
+                        
+                        // Two appointments overlap if:
+                        // newStart < existingEnd AND newEnd > existingStart
+                        const hasOverlap = newStartTime < existingEnd && newEndTime > existingStart;
+                        
+                        console.log('Checking appointment (getAllRecords):', appointment.id);
+                        console.log('  Existing:', existingStart.toISOString(), 'to', existingEnd.toISOString());
+                        console.log('  New:', newStartTime.toISOString(), 'to', newEndTime.toISOString());
+                        console.log('  Same doctor:', sameDoctor, 'Same patient:', samePatient);
+                        console.log('  Has overlap:', hasOverlap);
+                        
+                        return hasOverlap;
+                    });
+                    
+                    if (overlappingAppointments.length > 0) {
+                        console.log('GetAllRecords found', overlappingAppointments.length, 'overlapping appointments');
+                        const overlap = overlappingAppointments[0];
+                        return handleOverlap(overlap, doctorId, doctorName, patientId, patientName);
+                    } else {
+                        console.log('GetAllRecords: No overlapping appointments found');
+                        return { isValid: true };
+                    }
+                } else {
+                    console.log('GetAllRecords: Invalid or empty response');
+                }
+            } catch (getAllError) {
+                console.error('GetAllRecords failed:', getAllError);
+            }
+
+            // If all methods fail, we should NOT allow the appointment to proceed
+            // This is a safety measure - if we can't verify there are no conflicts, we should block
+            console.warn('All overlap check methods failed - blocking appointment for safety');
+            return { 
+                isValid: false, 
+                message: "❌ Unable to verify appointment availability. Please try again or contact support." 
+            };
+
+        } catch (error) {
+            console.error('Overlap check error:', error);
+            const errorMsg = error.message || 'Unknown error';
+            console.error('Full error details:', {
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+                code: error.code,
+                status: error.status
+            });
+            
+            // If there's an error checking for overlaps, we should block the appointment for safety
+            return { 
+                isValid: false, 
+                message: `❌ Unable to check for overlapping appointments. Please try again later. (${errorMsg})` 
+            };
+        }
+    }
+
     /** Create update payload with all existing fields **/
     function createUpdatePayload(newDateTime) {
         if (!currentAppointmentData || !newDateTime) {
@@ -306,6 +637,15 @@ ZOHO.embeddedApp.on("PageLoad", function (data) {
             if (!newDateTime) {
                 showMessage("Invalid date or time selected", "error");
                 return;
+            }
+
+            // Calculate end time for validation (assuming 30 minutes duration)
+            const newEndDateTime = calculateEndDateTime(newDateTime, 30);
+
+            // Validate appointment availability (including overlap check)
+            const isValid = await validateAppointmentAvailability(newDateTime, newEndDateTime);
+            if (!isValid) {
+                return; // Validation failed, error message already shown
             }
 
             // Create the update payload with all existing fields
